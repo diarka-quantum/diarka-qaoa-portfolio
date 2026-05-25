@@ -1,0 +1,11 @@
+qiskit>=1.0
+qiskit-ibm-runtime
+qiskit-aer
+qiskit-optimization
+qiskit-finance
+numpy
+pandas
+matplotlib
+jupyter
+cvxpy
+yfinance
