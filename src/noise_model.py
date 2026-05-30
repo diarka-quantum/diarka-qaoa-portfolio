@@ -44,6 +44,14 @@ from qiskit_aer.noise import (
     thermal_relaxation_error,
     ReadoutError,
 )
+from qiskit_aer.primitives import EstimatorV2 as AerEstimatorV2
+from qiskit_aer.primitives import SamplerV2 as AerSamplerV2
+
+
+# IBM Heron native gate set. Transpile QAOA ansatze to these gates before
+# running through a noisy Aer primitive, so noise applies per-native-gate
+# (and the CZ count — the dominant error driver — is physically faithful).
+HERON_BASIS_GATES = ["sx", "x", "rz", "cz", "id"]
 
 
 # ---------------------------------------------------------------------------
@@ -204,3 +212,36 @@ def attribution_suite() -> dict[str, NoiseChannels]:
         "+T1/T2": NoiseChannels(True, True, True, False),
         "+readout (full)": NoiseChannels(True, True, True, True),
     }
+
+
+# ---------------------------------------------------------------------------
+# Aer primitive factories — the bridge into the refactored qaoa.optimise_qaoa
+# and qaoa.sample (which now accept `estimator=` and `sampler=`).
+# ---------------------------------------------------------------------------
+def noisy_estimator(noise_model: NoiseModel, seed: Optional[int] = None) -> AerEstimatorV2:
+    """Aer EstimatorV2 configured with a noise model.
+
+    Pass directly to ``optimise_qaoa(..., estimator=noisy_estimator(nm))`` along
+    with ``basis_gates=HERON_BASIS_GATES``. With a noise model present, Aer
+    computes the expectation via density-matrix/sampling under that model, so
+    the optimised ⟨H⟩ reflects the noisy landscape rather than the ideal one.
+    """
+    options = {"backend_options": {"noise_model": noise_model}}
+    if seed is not None:
+        options["run_options"] = {"seed_simulator": seed}
+    return AerEstimatorV2(options=options)
+
+
+def noisy_sampler(noise_model: NoiseModel, seed: Optional[int] = None) -> AerSamplerV2:
+    """Aer SamplerV2 configured with a noise model.
+
+    Pass to ``sample(result, sampler=noisy_sampler(nm))``. The circuit being
+    sampled (``result.ansatz``) must already be in native gates, which it is
+    when ``optimise_qaoa`` was called with ``basis_gates=HERON_BASIS_GATES``.
+    """
+    # SamplerV2 takes ``seed`` as a dedicated constructor argument; passing it
+    # via run_options collides with Aer's internal seed handling.
+    return AerSamplerV2(
+        seed=seed,
+        options={"backend_options": {"noise_model": noise_model}},
+    )

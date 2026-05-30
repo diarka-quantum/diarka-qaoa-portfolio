@@ -9,3 +9,4 @@ matplotlib
 jupyter
 cvxpy
 yfinance
+qiskit-aer
