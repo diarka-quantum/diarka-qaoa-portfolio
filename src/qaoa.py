@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from typing import Sequence
 
 import numpy as np
-from qiskit import QuantumCircuit, transpile
+from qiskit import QuantumCircuit
 from qiskit.circuit import Parameter, ParameterVector
 from qiskit.circuit.library import PauliEvolutionGate
 from qiskit.primitives import StatevectorEstimator, StatevectorSampler
@@ -137,9 +137,6 @@ def optimise_qaoa(
     maxiter: int = 200,
     rhobeg: float = 0.3,
     tol: float = 1e-4,
-    estimator=None,
-    basis_gates: Sequence[str] | None = None,
-    optimization_level: int = 1,
 ) -> QAOAResult:
     """Minimise ⟨H⟩ over the QAOA parameters at depth ``p``.
 
@@ -160,22 +157,6 @@ def optimise_qaoa(
         scipy optimiser name. COBYLA is robust and gradient-free which suits
         QAOA's noisy-looking landscapes even at the simulator level.
     maxiter, rhobeg, tol : COBYLA hyperparameters.
-    estimator : BaseEstimatorV2, optional
-        The primitive used to evaluate ⟨H⟩. Defaults to ``StatevectorEstimator``
-        (exact, noiseless). Pass an Aer noisy ``EstimatorV2`` here to optimise
-        under a noise model — this is the Week 4 entry point. The interface
-        contract is the V2 PUB form ``run([(circuit, observable, params)])``
-        with the energy read from ``result()[0].data.evs``; both the statevector
-        and Aer primitives satisfy it.
-    basis_gates : Sequence[str], optional
-        If given, the ansatz is transpiled to these native gates ONCE before
-        the optimisation loop. Required when using an Aer noisy estimator,
-        because Aer cannot assemble the raw ``PauliEvolutionGate`` — and because
-        transpiling to e.g. ``{sx, rz, cz}`` is what makes the two-qubit gate
-        count (and therefore the gate-error contribution) physically faithful.
-        Leave as ``None`` for the statevector path (it decomposes internally).
-    optimization_level : int
-        Transpiler optimisation level used only when ``basis_gates`` is set.
     """
     if initial_params is None:
         initial_params = default_initial_parameters(p)
@@ -184,26 +165,13 @@ def optimise_qaoa(
             f"initial_params length {len(initial_params)} ≠ 2p = {2 * p}."
         )
 
-    if estimator is None:
-        estimator = StatevectorEstimator()
-
     ansatz = qaoa_ansatz(hamiltonian, p)
-
-    # Transpile to native gates if requested (noisy-backend path). The
-    # parameterised circuit keeps its free parameters through transpilation,
-    # so the optimisation loop binds them exactly as before.
-    run_ansatz = ansatz
-    if basis_gates is not None:
-        run_ansatz = transpile(
-            ansatz,
-            basis_gates=list(basis_gates),
-            optimization_level=optimization_level,
-        )
+    estimator = StatevectorEstimator()
 
     trace: list[float] = []
 
     def cost(params: np.ndarray) -> float:
-        job = estimator.run([(run_ansatz, hamiltonian, params)])
+        job = estimator.run([(ansatz, hamiltonian, params)])
         energy = float(job.result()[0].data.evs)
         trace.append(energy)
         return energy
@@ -220,7 +188,7 @@ def optimise_qaoa(
         trace=np.array(trace),
         n_iterations=int(getattr(result, "nfev", len(trace))),
         converged=bool(result.success),
-        ansatz=run_ansatz,
+        ansatz=ansatz,
     )
 
 
@@ -232,25 +200,12 @@ def sample(
     *,
     shots: int = 4096,
     seed: int | None = None,
-    sampler=None,
 ) -> QAOAResult:
     """Sample bitstrings from the optimised circuit.
 
     Returns the same ``QAOAResult`` with ``counts`` and ``shots`` populated.
-
-    Parameters
-    ----------
-    sampler : BaseSamplerV2, optional
-        The primitive used to draw shots. Defaults to ``StatevectorSampler``
-        (exact, noiseless). Pass an Aer noisy ``SamplerV2`` to draw shots under
-        a noise model — the Week 4 entry point. The contract is the V2 PUB form
-        ``run([(measured_circuit, params)], shots=shots)`` with counts read from
-        ``result()[0].data.meas.get_counts()``. Note: when sampling through a
-        noisy Aer sampler, ``result.ansatz`` must already be in native gates
-        (it is, if ``optimise_qaoa`` was called with ``basis_gates``).
     """
-    if sampler is None:
-        sampler = StatevectorSampler(seed=seed) if seed is not None else StatevectorSampler()
+    sampler = StatevectorSampler(seed=seed) if seed is not None else StatevectorSampler()
 
     measured = result.ansatz.copy()
     measured.measure_all()
