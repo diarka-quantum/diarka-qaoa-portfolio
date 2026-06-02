@@ -16,3 +16,4 @@ data/processed/
 # Editors
 .vscode/
 .idea/
+*.pyc
